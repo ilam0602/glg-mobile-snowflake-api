@@ -1,0 +1,11 @@
+{
+    "apps": [
+      {
+        "name": "flask_app",
+        "script": "./start_flask.sh",
+        "max_memory_restart": "1G",
+        "autorestart": true,
+        "watch": false
+      }
+    ]
+  }
