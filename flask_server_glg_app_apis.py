@@ -7,12 +7,15 @@ import os
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
 from dotenv import load_dotenv
+import requests
 
 load_dotenv()
 
 # Load the Firebase service account key from environment variable
 firebase_service_account_key = json.loads(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY"))
 forth_api_key = json.loads(os.getenv("FORTH_API_KEY"))
+YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
+CHANNEL_ID = os.getenv('CHANNEL_ID')
 
 # Initialize Firebase Admin SDK
 cred = credentials.Certificate(firebase_service_account_key)
@@ -132,6 +135,51 @@ def get_debts():
     df = snow_data_pull(f'SELECT * FROM KORE_AI.DATA.TBL_DEBTS WHERE CONTACT_ID = {contact_id}', 'ENCS')
     json_data = df.to_json(orient='records')
     return json_data, code
+
+@app.route('/videos', methods=['GET'])
+def get_videos():
+    # # Get the auth token from the request headers
+    # token = request.headers.get('Authorization')
+
+    # # Validate the auth token
+    # if not token or token != AUTH_TOKEN:
+    #     return jsonify({'error': 'Unauthorized access'}), 401
+
+    # Parameters for the YouTube Data API request
+    params = {
+        'part': 'snippet',
+        'channelId': CHANNEL_ID,
+        'maxResults': 10,
+        'order': 'date',
+        'type': 'video',
+        'key': YOUTUBE_API_KEY,
+    }
+
+    # Make the API request to YouTube Data API
+    api_url = 'https://www.googleapis.com/youtube/v3/search'
+    response = requests.get(api_url, params=params)
+
+    # Check if the request was successful
+    if response.status_code != 200:
+        print(response.json())
+        return jsonify({'error': 'Failed to fetch videos'}), 500
+
+    # Parse the JSON response
+    data = response.json()
+    videos = []
+
+    for item in data.get('items', []):
+        video = {
+            'videoId': item['id']['videoId'],
+            'title': item['snippet']['title'],
+            'description': item['snippet']['description'],
+            'thumbnail': item['snippet']['thumbnails']['high']['url'],
+            'publishedAt': item['snippet']['publishedAt'],
+        }
+        videos.append(video)
+
+    # Return the list of videos as JSON
+    return jsonify({'videos': videos}), 200
 
 if __name__ == '__main__':
     app.run(debug = False,host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
