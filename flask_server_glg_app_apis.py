@@ -59,17 +59,30 @@ def authenticate(token, contact_id, check_contact_id):
 
 # Function to pull data from Snowflake
 def snow_data_pull(sql_statement, snowflake_instance):
-    conn = snowflake.connector.connect(
-        user=os.getenv(f'{snowflake_instance}_snow_username'.upper()),
-        password=os.getenv(f'{snowflake_instance}_snow_password'.upper()),
-        account=os.getenv(f'{snowflake_instance}_snow_account'.upper()),
-        warehouse=os.getenv(f'{snowflake_instance}_snow_warehouse'.upper()),
-        role=os.getenv(f'{snowflake_instance}_snow_role'.upper())
-    )
-    cur = conn.cursor()
-    cur.execute(sql_statement)
-    df = cur.fetch_pandas_all()
-    return df
+    conn = None
+    cur = None
+    try:
+        print(os.getenv(f'{snowflake_instance}_snow_username'.upper()), file=sys.stderr)
+        conn = snowflake.connector.connect(
+            user=os.getenv(f'{snowflake_instance}_snow_username'.upper()),
+            password=os.getenv(f'{snowflake_instance}_snow_password'.upper()),
+            account=os.getenv(f'{snowflake_instance}_snow_account'.upper()),
+            warehouse=os.getenv(f'{snowflake_instance}_snow_warehouse'.upper()),
+            role=os.getenv(f'{snowflake_instance}_snow_role'.upper())
+        )
+        cur = conn.cursor()
+        cur.execute(sql_statement)
+        df = cur.fetch_pandas_all()
+        return df
+    except Exception as e:
+        print(f"Error in snow_data_pull: {e}", file=sys.stderr)
+        return None
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
 
 def request_check(headers, json_body, endpoint):
     code = None
@@ -115,15 +128,19 @@ def get_contact():
     headers, json_body, code, code_discription, contact_id, lookup_field, lookup_value = request_check(request.headers, request.get_json(), 'get_contact')
     if code != 200:
         return jsonify({"Response": code_discription}), code
-    json_data = []
+    json_data = None
     attempt = 0
     attempts = 10
+    df = snow_data_pull(f"SELECT ADDRESS,CITY,STATE,ZIP,CELL_PHONE_NUMBER,CONTACT_ID FROM GUARDIAN_APP.DATA.TBL_CONTACT_ID_LIST WHERE {lookup_field} = '{lookup_value}'", 'ENCS')
+    json_data = df.to_json(orient='records')
 
-    while(len(json_data) == 0 and attempt < attempts):
-        df = snow_data_pull(f"SELECT * FROM KORE_AI.DATA.TBL_CONTACT_ID_LIST WHERE {lookup_field} = '{lookup_value}'", 'ENCS')
+    while((json_data == None or len(json_data) == 2 )and attempt < attempts):
+        #TODO UPDATE WITH BACKUP TABLE
+        df = snow_data_pull(f"SELECT ADDRESS,CITY,STATE,ZIP,CELL_PHONE_NUMBER,CONTACT_ID FROM GUARDIAN_APP.DATA.TBL_CONTACT_ID_LIST WHERE {lookup_field} = '{lookup_value}'", 'ENCS')
         json_data = df.to_json(orient='records')
         attempt += 1
-        time.sleep(.05)
+        time.sleep(.25)
+        print(f'{lookup_field} of {lookup_value} json_data: {json_data}',file=sys.stderr)
 
     if(len(json_data) == 0):
         code = 404
@@ -137,32 +154,48 @@ def get_payment_plan():
     headers, json_body, code, code_discription, contact_id, lookup_field, lookup_value = request_check(request.headers, request.get_json(), 'get_payment_plan')
     if code != 200:
         return jsonify({"Response": code_discription}), code
-    json_data = []
+    
+    json_data = None
     attempt = 0
     attempts = 10
-
-    while(len(json_data) == 0 and attempt < attempts):
-        df = snow_data_pull(f'SELECT * FROM KORE_AI.DATA.TBL_PAYMENT_PLAN2 WHERE CONTACT_ID = {contact_id}', 'ENCS')
+    
+    # Updated SQL to filter on PROCESS_DATE1 > GETDATE()
+    df = snow_data_pull(
+        f"SELECT * FROM GUARDIAN_APP.DATA.TBL_UNPROCESSED_TRANSACTIONS WHERE CONTACT_ID = {contact_id} ORDER BY PROCESS_DATE ASC", 
+        'ENCS'
+    )
+    json_data = df.to_json(orient='records')
+    
+    # Retry with backup table if needed, also including the new condition
+    while ((json_data is None or len(json_data) == 2) and attempt < attempts):
+        #TODO: UPDATE WITH BACKUP TABLE
+        df = snow_data_pull(
+            f"SELECT * FROM GUARDIAN_APP.DATA.TBL_UNPROCESSED_TRANSACTIONS WHERE CONTACT_ID = {contact_id} ORDER BY PROCESS_DATE ASC", 
+            'ENCS'
+        )
         json_data = df.to_json(orient='records')
         attempt += 1
-        time.sleep(.05)
+        time.sleep(0.05)
 
-    if(len(json_data) == 0):
+    if len(json_data) == 0:
         code = 404
 
     return json_data, code
 
-@app.route('/get_debts', methods=['POST'])
-def get_debts():
-    headers, json_body, code, code_discription, contact_id, lookup_field, lookup_value = request_check(request.headers, request.get_json(), 'get_debts')
+@app.route('/get_payment_plan_prev', methods=['POST'])
+def get_payment_plan_prev():
+    headers, json_body, code, code_discription, contact_id, lookup_field, lookup_value = request_check(request.headers, request.get_json(), 'get_payment_plan')
     if code != 200:
         return jsonify({"Response": code_discription}), code
     json_data = []
     attempt = 0
     attempts = 10
+    df = snow_data_pull(f'SELECT * FROM GUARDIAN_APP.DATA.TBL_ALL_TRANSACTIONS WHERE CONTACT_ID = {contact_id} ORDER BY PROCESS_DATE ASC', 'ENCS')
+    json_data = df.to_json(orient='records')
 
-    while(len(json_data) == 0 and attempt < attempts):
-        df = snow_data_pull(f'SELECT * FROM KORE_AI.DATA.TBL_DEBTS WHERE CONTACT_ID = {contact_id}', 'ENCS')
+    while(len(json_data) == 2 and attempt < attempts):
+        #TODO UPDATE WITH NEW SQL QUERY
+        df = snow_data_pull(f'SELECT * FROM GUARDIAN_APP.DATA.TBL_ALL_TRANSACTIONS WHERE CONTACT_ID = {contact_id} ORDER BY PROCESS_DATE ASC', 'ENCS')
         json_data = df.to_json(orient='records')
         attempt += 1
         time.sleep(.05)
@@ -171,6 +204,47 @@ def get_debts():
         code = 404
 
     return json_data, code
+@app.route('/get_debts', methods=['POST'])
+def get_debts():
+    headers, json_body, code, code_discription, contact_id, lookup_field, lookup_value = request_check(request.headers, request.get_json(), 'get_debts')
+    if code != 200:
+        return jsonify({"Response": code_discription}), code
+
+    json_data = None
+    attempt = 0
+    attempts = 10
+
+    df = snow_data_pull(f'SELECT * FROM GUARDIAN_APP.DATA.TBL_DEBTS WHERE CONTACT_ID = {contact_id}', 'ENCS')
+
+    # Hotfix: Replace SETTLEMENT_AMOUNT value 0.0 with None (which becomes null in JSON)
+    if 'SETTLEMENT_AMOUNT' in df.columns:
+        df['SETTLEMENT_AMOUNT'] = df['SETTLEMENT_AMOUNT'].replace(0.0, None)
+
+    # Check if the following columns have a value of False and replace them with None
+    for col in ['CLIENT_AUTH_OBTAINED', 'IN_REVIEW', 'QC_PASS', 'COMPLETED']:
+        if col in df.columns:
+            df[col] = df[col].replace(False, None)
+
+    json_data = df.to_json(orient='records')
+
+    while ((json_data is None or len(json_data) == 2) and attempt < attempts):
+        df = snow_data_pull(f'SELECT * FROM GUARDIAN_APP.DATA.TBL_DEBTS WHERE CONTACT_ID = {contact_id}', 'ENCS')
+        if 'SETTLEMENT_AMOUNT' in df.columns:
+            df['SETTLEMENT_AMOUNT'] = df['SETTLEMENT_AMOUNT'].replace(0.0, None)
+        # Repeat the check and replacement for the boolean columns inside the loop
+        for col in ['CLIENT_AUTH_OBTAINED', 'IN_REVIEW', 'QC_PASS']:
+            if col in df.columns:
+                df[col] = df[col].replace(False, None)
+        json_data = df.to_json(orient='records')
+        attempt += 1
+        time.sleep(0.05)
+
+    if len(json_data) == 0:
+        code = 404
+
+    return json_data, code
+
+
 cached_videos = None
 last_fetch_time = 0
 CACHE_EXPIRATION = 3600  # 1 hour in seconds
@@ -182,7 +256,10 @@ def get_videos():
     # Check if the cache is still valid (within 1 hour)
     current_time = time.time()
     if cached_videos and (current_time - last_fetch_time) < CACHE_EXPIRATION:
+        print(f'not fetching {current_time - last_fetch_time}')
         return jsonify({'videos': cached_videos}), 200
+    
+    print(f'refetching {cached_videos} {current_time-last_fetch_time} {CACHE_EXPIRATION}',file=sys.stderr)
 
     # Step 1: Retrieve the playlist ID for the channel's uploaded videos
     channel_url = 'https://www.googleapis.com/youtube/v3/channels'
