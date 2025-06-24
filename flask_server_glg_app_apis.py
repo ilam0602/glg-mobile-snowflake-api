@@ -328,13 +328,13 @@ def get_settlement_offer():
     attempts, attempt = 10, 0
 
     df = snow_data_pull(
-        f"SELECT * FROM DATA_ALPS.DATA_VAULT.VW_CONTACT_AUTH_SETTLEMENT_OFFERS "
+        f"SELECT * EXCLUDE(SYNC_TIMESTAMP) FROM GUARDIAN_APP.DATA.TBL_CONTACT_AUTH_SETTLEMENT_OFFERS "
         f"WHERE CONTACT_ID = {contact_id}",
         'ENCS'
     )
     while df.to_json(orient='records') == '[]' and attempt < attempts:
         df = snow_data_pull(
-            f"SELECT * FROM DATA_ALPS.DATA_VAULT.VW_CONTACT_AUTH_SETTLEMENT_OFFERS "
+            f"SELECT * EXCLUDE(SYNC_TIMESTAMP) FROM GUARDIAN_APP.DATA.TBL_CONTACT_AUTH_SETTLEMENT_OFFERS "
             f"WHERE CONTACT_ID = {contact_id}",
             'ENCS'
         )
@@ -349,7 +349,7 @@ def get_settlement_offer():
         message2  = entry.get("AUTHORIZATION_MESSAGE_PART2")
         settAmt   = entry.get("SETTLEMENT_AMOUNT")
         plan_df   = snow_data_pull(
-            f"SELECT * FROM DATA_ALPS.DATA_VAULT.VW_SETTLEMENT_OFFER_PAYMENT_PLAN WHERE ID = {offer_id}",
+            f"SELECT * EXCLUDE(SYNC_TIMESTAMP) FROM GUARDIAN_APP.DATA.TBL_SETTLEMENT_OFFER_PAYMENT_PLAN WHERE ID = {offer_id}",
             "ENCS"
         )
         plan      = plan_df.to_dict(orient="records")
@@ -358,7 +358,7 @@ def get_settlement_offer():
         while len(plan) == 2 and plan_attempt < attempts:
             time.sleep(.05)
             plan_df = snow_data_pull(
-                f"SELECT * FROM DATA_ALPS.DATA_VAULT.VW_SETTLEMENT_OFFER_PAYMENT_PLAN WHERE ID = {offer_id}",
+                f"SELECT * EXCLUDE(SYNC_TIMESTAMP) FROM GUARDIAN_APP.DATA.TBL_SETTLEMENT_OFFER_PAYMENT_PLAN WHERE ID = {offer_id}",
                 "ENCS"
             )
             plan = plan_df.to_dict(orient="records")
